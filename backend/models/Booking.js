@@ -54,7 +54,7 @@ bookingSchema.pre('save', function(next) {
         // Generate a random ticket ID like MIT-1234
         this.ticketId = 'MIT-' + Math.floor(1000 + Math.random() * 9000);
     }
-    next();
+    
 });
 
 module.exports = mongoose.model('Booking', bookingSchema);
