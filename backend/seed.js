@@ -7,7 +7,7 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/mit-schola
 
 const seedData = async () => {
     try {
-        await mongoose.connect(MONGO_URI);
+        await mongoose.connect(MONGO_URI,{ dbName: 'firstlap'});
         console.log('Connected to MongoDB');
 
         // Clear existing data
