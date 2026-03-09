@@ -19,7 +19,7 @@ app.get('/api/health', (req, res) => {
 
 // Start Server & Connect to DB
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://saumyajichkar21_db_user:<db_password>@cluster0.dslw6gy.mongodb.net/first_lap';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://saumyajichkar21_db_user:<yZEy4vwHnVzAPgtj>@cluster0.dslw6gy.mongodb.net/first_lap';
 
 mongoose.connect(MONGO_URI)
     .then(() => {
