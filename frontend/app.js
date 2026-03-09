@@ -1,4 +1,4 @@
-const API_URL = 'https://scholarship-backend-6rdu.onrender.com';
+const API_URL = 'https://scholarship-backend-6rdu.onrender.com/api';
 
 // State
 let selectedDate = null;
