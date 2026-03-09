@@ -21,7 +21,7 @@ app.get('/api/health', (req, res) => {
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://saumyajichkar21_db_user:yZEy4vwHnVzAPgtj@cluster0.dslw6gy.mongodb.net/firstlap';
 
-mongoose.connect(MONGO_URI)
+mongoose.connect(MONGO_URI,{ dbName: 'firstlap'})
     .then(() => {
         console.log('Connected to MongoDB');
         app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
