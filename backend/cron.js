@@ -12,7 +12,7 @@ const startCronJobs = () => {
         console.log('[CRON] Checking for upcoming bookings to send reminders...');
         try {
             // Find bookings that are Verified and reminder has not been sent yet
-                        const upcomingBookings = await Booking.find({ status: { $ne: 'Cancelled' }, reminderSent: false }).populate('slotId');
+                        const upcomingBookings = await Booking.find({ status: { $in: ['Pending', 'Verified'] }, reminderSent: false }).populate('slotId');
             
             const now = moment();
             
