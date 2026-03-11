@@ -1,3 +1,4 @@
+const moment = require('moment');
 const express = require('express');
 const router = express.Router();
 const Booking = require('../models/Booking');
