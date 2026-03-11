@@ -63,6 +63,8 @@ router.get('/', protect, async (req, res) => {
         // Sort bookings chronologically by slot's date and time
         const sortedBookings = bookings.sort((a, b) => {
             if (!a.slotId || !b.slotId) return 0;
+            if(!a.slotId.date || !b.slotId.date) return 0;
+            if(!a.slotId.time || !b.slotId.time) return 0;
             const timeA = moment(`${a.slotId.date} ${a.slotId.time.split(' - ')[0]}`, 'DD MMM YYYY hh:mm A');
             const timeB = moment(`${b.slotId.date} ${b.slotId.time.split(' - ')[0]}`, 'DD MMM YYYY hh:mm A');
             return timeA - timeB;
