@@ -1,0 +1,132 @@
+const cron = require('node-cron');
+const twilio = require('twilio');
+const moment = require('moment');
+const Booking = require('./models/Booking');
+const Slot = require('./models/Slot');
+
+// Initialize Twilio Client (requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN in env)
+const twilioClient = process.env.TWILIO_ACCOUNT_SID ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN) : null;
+
+// The 5 time blocks per day (10 AM - 4 PM, skipping 12:30-1:30 lunch)
+const TIME_INTERVALS = [
+    '10:00 AM - 11:00 AM',
+    '11:00 AM - 12:00 PM',
+    '01:30 PM - 02:30 PM',
+    '02:30 PM - 03:30 PM',
+    '03:30 PM - 04:30 PM'
+];
+
+// Auto-generate slots for the next 7 valid working days
+const generateUpcomingSlots = async () => {
+    console.log('[SLOTS] Checking and generating slots for working days...');
+    try {
+        let created = 0;
+        let daysToProcess = 0;
+        let d = 0;
+        
+        while (daysToProcess < 7) {
+            const currentMoment = moment().add(d, 'days');
+            const isWeekend = currentMoment.day() === 0 || currentMoment.day() === 6; // 0=Sun, 6=Sat
+            
+            if (!isWeekend) {
+                const date = currentMoment.format('DD MMM YYYY');
+                for (const time of TIME_INTERVALS) {
+                    const exists = await Slot.findOne({ date, time });
+                    if (!exists) {
+                        await Slot.create({ date, time, capacity: 10 });
+                        created++;
+                    }
+                }
+                daysToProcess++;
+            }
+            d++;
+            
+            // Safety break to prevent infinite loop
+            if (d > 30) break;
+        }
+        console.log(`[SLOTS] Done. ${created} new slot(s) created.`);
+    } catch (err) {
+        console.error('[SLOTS] Error generating slots:', err.message);
+    }
+};
+// Delete slots from previous days to keep the database clean
+const cleanupOldSlots = async () => {
+    console.log('[SLOTS] Running cleanup for past slots...');
+    try {
+        const todayStr = moment().format('YYYY-MM-DD'); 
+        // Note: Slots are stored as 'DD MMM YYYY'. We need to be careful with comparison.
+        // A more robust way is to fetch all and filter, or use a date-parseable query if possible.
+        // Since we already use moment in this project, we'll fetch and filter.
+        
+        const allSlots = await Slot.find();
+        const now = moment().startOf('day');
+        let deletedCount = 0;
+
+        for (const slot of allSlots) {
+            const slotDate = moment(slot.date, 'DD MMM YYYY');
+            if (slotDate.isBefore(now)) {
+                await Slot.findByIdAndDelete(slot._id);
+                deletedCount++;
+            }
+        }
+        
+        console.log(`[SLOTS] Cleanup complete. Removed ${deletedCount} past slot(s).`);
+    } catch (err) {
+        console.error('[SLOTS] Error during cleanup:', err.message);
+    }
+};
+
+const startCronJobs = () => {
+    // Generate upcoming slots and cleanup old ones immediately on startup
+    generateUpcomingSlots();
+    cleanupOldSlots();
+
+    // Then re-generate and cleanup every day at midnight
+    cron.schedule('0 0 * * *', () => {
+        console.log('[CRON] Midnight: generating new day slots and cleaning up old ones...');
+        generateUpcomingSlots();
+        cleanupOldSlots();
+    });
+
+    // Run every 5 minutes to check for upcoming appointments and send SMS
+    cron.schedule('*/5 * * * *', async () => {
+        try {
+            const upcomingBookings = await Booking.find({ status: { $in: ['Pending', 'Verified'] }, reminderSent: false }).populate('slotId');
+            const now = moment();
+
+            for (const booking of upcomingBookings) {
+                if (!booking.slotId) continue;
+                const startTimeString = booking.slotId.time.split(' - ')[0];
+                const slotDateTime = moment(`${booking.slotId.date} ${startTimeString}`, 'DD MMM YYYY hh:mm A');
+                const diffMinutes = slotDateTime.diff(now, 'minutes');
+
+                if (diffMinutes > 0 && diffMinutes <= 60) {
+                    const reminderText = `Reminder: Your MIT Scholarship Verification is scheduled for ${booking.slotId.date} at ${startTimeString}. Ticket #: ${booking.ticketId}. Please bring all required documents.`;
+
+                    try {
+                        if (twilioClient && process.env.TWILIO_PHONE_NUMBER) {
+                            await twilioClient.messages.create({
+                                body: reminderText,
+                                from: process.env.TWILIO_PHONE_NUMBER,
+                                to: '+91' + booking.contactNumber
+                            });
+                            console.log(`[CRON] SMS sent to ${booking.studentName} (${booking.contactNumber})`);
+                        }
+                    } catch (smsErr) {
+                        console.error(`[CRON] Failed to send SMS to ${booking.contactNumber}:`, smsErr.message);
+                    }
+
+                    booking.reminderSent = true;
+                    await booking.save();
+                }
+            }
+        } catch (error) {
+            console.error('[CRON] Error running reminder cron job:', error);
+        }
+    });
+
+    console.log('[CRON] Reminder background worker scheduled. (Runs every 5 mins)');
+};
+
+module.exports = { startCronJobs };
+
