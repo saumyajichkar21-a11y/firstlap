@@ -1,0 +1,656 @@
+const API_URL = 'https://scholarship-backend-6rdu.onrender.com/api';
+
+// State
+let selectedDate = null;
+let selectedTime = null;
+let selectedSlotId = null;
+let currentSlots = [];
+let adminToken = localStorage.getItem('mit_admin_token');
+
+// DOM Elements
+const slotsContainer = document.getElementById('slots-container');
+const dateSelectorContainer = document.getElementById('date-selector-container');
+const screenHome = document.getElementById('screen-home');
+const screenBooking = document.getElementById('screen-booking');
+const screenConfirmation = document.getElementById('screen-confirmation');
+const selectedSlotDisplay = document.getElementById('selected-slot-display');
+const bookingForm = document.getElementById('booking-form');
+
+const navHome = document.getElementById('nav-home');
+const navAdmin = document.getElementById('nav-admin');
+const studentFlow = document.getElementById('student-flow');
+const adminFlow = document.getElementById('admin-flow');
+
+// Admin Elements
+const screenAdminLogin = document.getElementById('screen-admin-login');
+const screenAdminDashboard = document.getElementById('screen-admin-dashboard');
+const adminLoginForm = document.getElementById('admin-login-form');
+const btnAdminLogout = document.getElementById('btn-admin-logout');
+
+// Modal Elements
+const addSlotsModal = document.getElementById('add-slots-modal');
+const btnAddSlotsModal = document.getElementById('btn-add-slots-modal');
+const btnCloseModal = document.getElementById('btn-close-modal');
+const addSlotsForm = document.getElementById('add-slots-form');
+
+// Initialization
+document.addEventListener('DOMContentLoaded', () => {
+    fetchSlots();
+    setupEventListeners();
+
+    // Check if admin is returning
+    if (adminToken) {
+        showAdminDashboard();
+    }
+});
+
+// Fetch slots from API
+async function fetchSlots() {
+    try {
+        const res = await fetch(`${API_URL}/slots`);
+        const slots = await res.json();
+        currentSlots = slots;
+        
+        // 1. Populate date selector first (this sets the initial selectedDate)
+        updateDateSelector();
+
+        // 2. Then render the slots for that specific date
+        renderSlots();
+    } catch (err) {
+        console.error('Error fetching slots:', err);
+    }
+}
+
+// Holidays (Format: YYYY-MM-DD)
+const HOLIDAYS = [
+    // Add specific holiday dates here
+    // '2024-03-29', // Example
+];
+
+// Generate an array of the next `count` valid working days
+function generateUpcomingDates(count) {
+    const dates = [];
+    let currentDate = new Date(); // Start from today
+
+    while (dates.length < count) {
+        const dayOfWeek = currentDate.getDay(); // 0 is Sunday, 6 is Saturday
+
+        // Format to YYYY-MM-DD for holiday checking
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const day = String(currentDate.getDate()).padStart(2, '0');
+        const formattedDate = `${year}-${month}-${day}`;
+
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = HOLIDAYS.includes(formattedDate);
+
+        if (!isWeekend && !isHoliday) {
+            // Valid working day
+            dates.push(new Date(currentDate));
+        }
+
+        // Move to the next day
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return dates;
+}
+
+function updateDateSelector() {
+    // Generate the next 7 working days dynamically
+    const upcomingDates = generateUpcomingDates(7);
+
+    if (dateSelectorContainer) {
+        dateSelectorContainer.innerHTML = ''; // Clear container
+    }
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    let firstFormattedDate = null;
+
+    upcomingDates.forEach((dateObj, index) => {
+        // Format to 'DD MMM YYYY' exactly as stored in the DB (Important for filtering slots)
+        const dateStr = `${String(dateObj.getDate()).padStart(2, '0')} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`;
+
+        if (index === 0) firstFormattedDate = dateStr;
+
+        // Format data-date to match HTML format standard (YYYY-MM-DD) natively
+        const yyyy = dateObj.getFullYear();
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const dd = String(dateObj.getDate()).padStart(2, '0');
+        const dataDate = `${yyyy}-${mm}-${dd}`;
+
+        const btn = document.createElement('button');
+        btn.className = `date-btn ${index === 0 ? 'active' : ''}`;
+        btn.dataset.date = dataDate;
+        // Also attach the formatted string so it's easier to use later
+        btn.dataset.formattedDate = dateStr;
+
+        btn.innerHTML = `
+            <span class="day-name">${days[dateObj.getDay()]}</span>
+            <span class="day-number">${dateObj.getDate()}</span>
+            <span class="month">${months[dateObj.getMonth()]}</span>
+        `;
+
+        if (dateSelectorContainer) {
+            dateSelectorContainer.appendChild(btn);
+        }
+
+        // Attach click listener
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.date-btn').forEach(b => b.classList.remove('active'));
+            const currentBtn = e.currentTarget;
+            currentBtn.classList.add('active');
+
+            selectedDate = currentBtn.dataset.formattedDate;
+
+            // Re-render
+            slotsContainer.style.opacity = '0.4';
+            setTimeout(() => {
+                slotsContainer.style.opacity = '1';
+                renderSlots();
+            }, 300);
+        });
+    });
+
+    if (!selectedDate && firstFormattedDate) {
+        selectedDate = firstFormattedDate;
+    }
+}
+
+// Render the slots grid
+function renderSlots() {
+    if (!slotsContainer) return;
+    slotsContainer.innerHTML = '';
+
+    // Filter slots strictly by selectedDate. If null, show nothing rather than everything.
+    const displaySlots = currentSlots.filter(s => s.date === selectedDate);
+
+    if (displaySlots.length === 0) {
+        slotsContainer.innerHTML = '<p style="color:var(--text-muted); grid-column:1/-1;">No slots available for this date.</p>';
+        return;
+    }
+
+    displaySlots.forEach((slot) => {
+        const slotEl = document.createElement('div');
+        slotEl.className = `slot-card ${slot.isFull ? 'full' : ''}`;
+
+        const spotsLeft = slot.capacity - slot.bookedCount;
+        let iconHtml = slot.isFull ? '<i class="fas fa-ban"></i> Full' : `<i class="fas fa-check"></i> ${spotsLeft} left`;
+
+        slotEl.innerHTML = `
+            <span class="slot-time">${slot.time}</span>
+            <span class="slot-status">${iconHtml}</span>
+        `;
+
+        if (!slot.isFull) {
+            slotEl.addEventListener('click', () => handleSlotClick(slot._id, slot.date, slot.time));
+        }
+
+        slotsContainer.appendChild(slotEl);
+    });
+}
+
+async function fetchAdminBookings() {
+    try {
+        const res = await fetch(`${API_URL}/bookings`, {
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+
+        if (res.status === 401) {
+            handleLogout();
+            return;
+        }
+
+        const bookings = await res.json();
+        renderAdminTable(bookings);
+
+        // Update stats
+        document.querySelector('.stat-card:nth-child(1) .stat-number').textContent = bookings.length;
+        document.querySelector('.stat-card:nth-child(3) .stat-number').textContent = bookings.filter(b => b.status === 'Verified').length;
+
+    } catch (err) {
+        console.error('Error fetching bookings:', err);
+    }
+}
+
+function renderAdminTable(bookings) {
+    const tbody = document.getElementById('admin-table-body');
+    tbody.innerHTML = '';
+
+    bookings.forEach(row => {
+        const slotTime = row.slotId ? `${row.slotId.date} ${row.slotId.time}` : 'Unknown';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${slotTime}</strong></td>
+            <td>
+                <div class="user-info">
+                    <span class="name">${row.studentName}</span>
+                    <span class="roll">${row.rollNumber}</span>
+                </div>
+            </td>
+            <td>${row.department}</td>
+            <td><span class="badge" style="background: var(--bg-main); color: var(--text-muted); border: 1px solid var(--border-color);">${row.scholarshipType}</span></td>
+            <td><span class="status-badge ${row.status.toLowerCase()}">${row.status}</span></td>
+            <td>
+                <button class="action-btn verify" onclick="updateBookingStatus('${row._id}', 'Verified')" title="Verify Documents"><i class="fas fa-check-circle"></i></button>
+                <button class="action-btn cancel" onclick="updateBookingStatus('${row._id}', 'Cancelled')" title="Cancel Appointment"><i class="fas fa-times"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+window.updateBookingStatus = async function (id, status) {
+    try {
+        await fetch(`${API_URL}/bookings/${id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${adminToken}`
+            },
+            body: JSON.stringify({ status })
+        });
+        fetchAdminBookings(); // Refresh
+        fetchSlots(); // Refresh capacity
+    } catch (err) {
+        console.error(err);
+    }
+};
+
+function handleSlotClick(id, date, time) {
+    selectedSlotId = id;
+    selectedDate = date;
+    selectedTime = time;
+    selectedSlotDisplay.textContent = `Slot: ${selectedDate}, ${selectedTime}`;
+    switchScreen(screenBooking);
+}
+
+function setupEventListeners() {
+    // Back to home from booking
+    document.getElementById('back-to-home').addEventListener('click', () => {
+        switchScreen(screenHome);
+        bookingForm.reset();
+    });
+
+    // Student Form Submission
+    bookingForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const payload = {
+            studentName: document.getElementById('studentName').value,
+            rollNumber: document.getElementById('rollNumber').value,
+            department: document.getElementById('department').value,
+            year: document.getElementById('year').value,
+            scholarshipType: document.getElementById('scholarshipType').value,
+            contactNumber: document.getElementById('contactNumber').value,
+            slotId: selectedSlotId
+        };
+
+        try {
+            const btn = e.target.querySelector('button');
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+            btn.disabled = true;
+
+            const res = await fetch(`${API_URL}/bookings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                alert(data.message || 'Error creating booking');
+                btn.innerHTML = 'Confirm Appointment';
+                btn.disabled = false;
+                return;
+            }
+
+            // Populate confirmation
+            document.getElementById('conf-name').textContent = data.studentName;
+            document.getElementById('conf-roll').textContent = data.rollNumber;
+            document.getElementById('conf-datetime').textContent = `${data.slotId.date}, ${data.slotId.time}`;
+            document.getElementById('conf-scholarship').textContent = data.scholarshipType;
+            document.getElementById('conf-id').textContent = data.ticketId;
+
+            switchScreen(screenConfirmation);
+            fetchSlots(); // Refresh slot capacities
+
+            btn.innerHTML = 'Confirm Appointment';
+            btn.disabled = false;
+        } catch (err) {
+            console.error(err);
+            alert('Network error. Please try again.');
+        }
+    });
+
+    // Return to home from confirmation
+    document.getElementById('btn-return-home').addEventListener('click', () => {
+        switchScreen(screenHome);
+        bookingForm.reset();
+    });
+
+    // Date Selectors are now dynamically handled in updateDateSelector()
+
+    // Admin Login Logic
+    adminLoginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const u = document.getElementById('adminUsername').value;
+        const p = document.getElementById('adminPassword').value;
+        const errDiv = document.getElementById('login-error');
+
+        try {
+            const res = await fetch(`${API_URL}/admin/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: u, password: p })
+            });
+            const data = await res.json();
+
+            if (res.ok) {
+                adminToken = data.token;
+                localStorage.setItem('mit_admin_token', adminToken);
+                showAdminDashboard();
+                adminLoginForm.reset();
+                errDiv.style.display = 'none';
+            } else {
+                errDiv.textContent = data.message;
+                errDiv.style.display = 'block';
+            }
+        } catch (err) {
+            errDiv.textContent = 'Server error during login.';
+            errDiv.style.display = 'block';
+        }
+    });
+
+    btnAdminLogout.addEventListener('click', handleLogout);
+
+    // Admin Add Slots Logic
+    if (btnAddSlotsModal) {
+        btnAddSlotsModal.addEventListener('click', () => {
+            addSlotsModal.classList.add('active');
+        });
+    }
+
+    if (btnCloseModal) {
+        btnCloseModal.addEventListener('click', () => {
+            addSlotsModal.classList.remove('active');
+            addSlotsForm.reset();
+        });
+    }
+
+    if (addSlotsForm) {
+        addSlotsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const date = document.getElementById('slotDate').value;
+            const capacity = document.getElementById('slotCapacity').value;
+
+            try {
+                const btn = e.target.querySelector('button');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Blocks...';
+                btn.disabled = true;
+
+                const res = await fetch(`${API_URL}/slots`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${adminToken}`
+                    },
+                    body: JSON.stringify({ date, capacity })
+                });
+
+                const data = await res.json();
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+
+                if (!res.ok) {
+                    alert(data.message || 'Error creating slot');
+                    return;
+                }
+
+                addSlotsModal.classList.remove('active');
+                addSlotsForm.reset();
+                fetchSlots(); // Refresh slots map
+
+                // Show success
+                alert('Slot created successfully!');
+            } catch (err) {
+                console.error(err);
+                alert('Network error. Please try again.');
+            }
+        });
+    }
+
+    // Navigation (Student vs Admin)
+    navHome.addEventListener('click', () => {
+        if (navHome.classList.contains('active')) return;
+        navAdmin.classList.remove('active');
+        navHome.classList.add('active');
+        adminFlow.classList.remove('active');
+        studentFlow.classList.add('active');
+        fetchSlots(); // Refresh slots for student view
+    });
+
+    navAdmin.addEventListener('click', () => {
+        if (navAdmin.classList.contains('active')) return;
+        navHome.classList.remove('active');
+        navAdmin.classList.add('active');
+        studentFlow.classList.remove('active');
+        adminFlow.classList.add('active');
+
+        if (adminToken) {
+            showAdminDashboard();
+        } else {
+            screenAdminLogin.classList.add('active');
+            screenAdminDashboard.classList.remove('active');
+        }
+    });
+
+    // Admin Tabs Logic
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.admin-view').forEach(v => v.classList.remove('active'));
+            
+            const targetTab = e.target.dataset.tab;
+            e.target.classList.add('active');
+            document.getElementById(`view-${targetTab}`).classList.add('active');
+
+            // Optionally hide search for manage slots
+            const searchContainer = document.getElementById('admin-search-container');
+            if (targetTab === 'manage-slots') {
+                searchContainer.style.visibility = 'hidden';
+                fetchManageSlots();
+            } else {
+                searchContainer.style.visibility = 'visible';
+                fetchAdminBookings();
+            }
+        });
+    });
+
+    // Admin Search Logic
+    const adminSearchInput = document.getElementById('admin-search');
+    if (adminSearchInput) {
+        adminSearchInput.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('.admin-view.active tbody tr');
+            
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(term) ? '' : 'none';
+            });
+        });
+    }
+}
+
+function showAdminDashboard() {
+    screenAdminLogin.classList.remove('active');
+    screenAdminDashboard.classList.add('active');
+    fetchAdminBookings();
+}
+
+async function fetchAdminBookings() {
+    try {
+        const res = await fetch(`${API_URL}/bookings`, {
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+
+        if (res.status === 401) {
+            handleLogout();
+            return;
+        }
+
+        const bookings = await res.json();
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const dateObj = new Date();
+        const todayStr = `${String(dateObj.getDate()).padStart(2, '0')} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`;
+
+        const todayBookings = bookings.filter(b => b.slotId && b.slotId.date === todayStr);
+        const pending = bookings.filter(b => b.status === 'Pending'); // Showing all pending in the list
+        const verified = bookings.filter(b => b.status === 'Verified');
+
+        renderAdminTable(pending);
+        renderVerifiedTable(verified);
+
+        // Update stats
+        document.querySelector('.stat-card:nth-child(1) .stat-number').textContent = todayBookings.length;
+        document.querySelector('.stat-card:nth-child(3) .stat-number').textContent = verified.length;
+
+    } catch (err) {
+        console.error('Error fetching bookings:', err);
+    }
+}
+
+function renderAdminTable(bookings) {
+    const tbody = document.getElementById('admin-table-body');
+    tbody.innerHTML = '';
+
+    if (bookings.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">No pending appointments found.</td></tr>';
+        return;
+    }
+
+    bookings.forEach(row => {
+        const slotTime = row.slotId ? `${row.slotId.date} ${row.slotId.time}` : 'Unknown';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${slotTime}</strong></td>
+            <td>
+                <div class="user-info">
+                    <span class="name">${row.studentName}</span>
+                    <span class="roll">${row.rollNumber}</span>
+                </div>
+            </td>
+            <td>${row.department}</td>
+            <td><span class="badge" style="background: var(--bg-main); color: var(--text-muted); border: 1px solid var(--border-color);">${row.scholarshipType}</span></td>
+            <td><span class="status-badge ${row.status.toLowerCase()}">${row.status}</span></td>
+            <td>
+                <button class="action-btn verify" onclick="updateBookingStatus('${row._id}', 'Verified')" title="Verify Documents"><i class="fas fa-check-circle"></i> Verify</button>
+                <button class="action-btn cancel" onclick="updateBookingStatus('${row._id}', 'Cancelled')" title="Cancel Appointment"><i class="fas fa-times"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderVerifiedTable(bookings) {
+    const tbody = document.getElementById('verified-table-body');
+    tbody.innerHTML = '';
+
+    if (bookings.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">No verified students yet.</td></tr>';
+        return;
+    }
+
+    bookings.forEach(row => {
+        const slotTime = row.slotId ? `${row.slotId.date} ${row.slotId.time}` : 'Unknown';
+        const verifiedAt = row.updatedAt ? new Date(row.updatedAt).toLocaleString() : 'N/A';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${slotTime}</strong></td>
+            <td>
+                <div class="user-info">
+                    <span class="name">${row.studentName}</span>
+                    <span class="roll">${row.rollNumber}</span>
+                </div>
+            </td>
+            <td>${row.department}</td>
+            <td><span class="badge" style="background: var(--bg-main); color: var(--text-muted); border: 1px solid var(--border-color);">${row.scholarshipType}</span></td>
+            <td><span style="font-size: 0.8rem; color: var(--text-muted);">${verifiedAt}</span></td>
+            <td>
+                <button class="action-btn cancel" onclick="updateBookingStatus('${row._id}', 'Pending')" title="Remove from Verified"><i class="fas fa-undo"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function fetchManageSlots() {
+    try {
+        const res = await fetch(`${API_URL}/slots/all`, {
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+        const slots = await res.json();
+        renderManageSlotsTable(slots);
+        
+        // Update stats
+        const availableCount = slots.filter(s => s.isActive && (s.capacity - s.bookedCount) > 0).length;
+        document.querySelector('.stat-card:nth-child(2) .stat-number').textContent = availableCount;
+    } catch (err) {
+        console.error('Error fetching all slots:', err);
+    }
+}
+
+function renderManageSlotsTable(slots) {
+    const tbody = document.getElementById('manage-slots-table-body');
+    tbody.innerHTML = '';
+
+    slots.forEach(slot => {
+        const tr = document.createElement('tr');
+        const visibilityClass = slot.isActive ? 'active' : 'inactive';
+        tr.innerHTML = `
+            <td>${slot.date}</td>
+            <td><strong>${slot.time}</strong></td>
+            <td>${slot.bookedCount} / ${slot.capacity}</td>
+            <td><span class="status-badge ${visibilityClass}">${slot.isActive ? 'Visible' : 'Hidden'}</span></td>
+            <td>
+                <button class="action-btn ${slot.isActive ? 'cancel' : 'verify'}" onclick="toggleSlotStatus('${slot._id}')">
+                    ${slot.isActive ? '<i class="fas fa-eye-slash"></i> Hide' : '<i class="fas fa-eye"></i> Show'}
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function toggleSlotStatus(id) {
+    try {
+        const res = await fetch(`${API_URL}/slots/${id}/toggle`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+        if (res.ok) {
+            fetchManageSlots();
+        }
+    } catch (err) {
+        console.error('Error toggling slot status:', err);
+    }
+}
+
+function handleLogout() {
+    adminToken = null;
+    localStorage.removeItem('mit_admin_token');
+    screenAdminDashboard.classList.remove('active');
+    screenAdminLogin.classList.add('active');
+}
+
+function switchScreen(activeScreen) {
+    document.querySelectorAll('#student-flow .screen').forEach(screen => {
+        screen.classList.remove('active');
+    });
+    activeScreen.classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
